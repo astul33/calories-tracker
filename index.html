@@ -3476,6 +3476,7 @@
         targetLine.setAttribute('stroke-dasharray', '4 4');
         svg.appendChild(targetLine);
 
+        const isAr = state.settings.lang === 'ar';
         // Target label text
         const targetTxt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         targetTxt.setAttribute('x', svgW - 12);
@@ -3484,7 +3485,7 @@
         targetTxt.setAttribute('fill', '#ea580c');
         targetTxt.setAttribute('font-size', '11');
         targetTxt.setAttribute('font-weight', '700');
-        targetTxt.textContent = `Target: ${target}`;
+        targetTxt.textContent = `${isAr ? 'الهدف' : 'Target'}: ${target}`;
         svg.appendChild(targetTxt);
 
         // Draw Bars
@@ -3505,20 +3506,23 @@
           rect.setAttribute('height', barH);
           rect.setAttribute('rx', '5');
           rect.setAttribute('fill', isOver ? 'var(--warning)' : 'var(--primary)');
-          rect.style.cursor = 'pointer';
-          rect.style.transition = 'opacity 0.15s ease';
+          rect.setAttribute('style', 'cursor: pointer; transition: opacity 0.15s ease;');
 
-          // Interactive tap
-          rect.addEventListener('mouseenter', () => {
+          const showBarTooltip = () => {
             rect.setAttribute('opacity', '0.75');
-            els.chartTapTooltip.textContent = `${d.dayName} (${d.key}): ${d.cal.toLocaleString()} kcal ${isOver ? '• Over target' : '• On track'}`;
-          });
+            const statusText = isAr
+              ? (isOver ? '• فوق الهدف' : '• ضمن الهدف')
+              : (isOver ? '• Over target' : '• On track');
+            els.chartTapTooltip.textContent = `${d.dayName} (${d.key}): ${d.cal.toLocaleString()} ${t('unit_kcal')} ${statusText}`;
+          };
+
+          // Interactive tap / mouse
+          rect.addEventListener('mouseenter', showBarTooltip);
           rect.addEventListener('mouseleave', () => {
             rect.setAttribute('opacity', '1');
           });
-          rect.addEventListener('click', () => {
-            els.chartTapTooltip.textContent = `${d.dayName} (${d.key}): ${d.cal.toLocaleString()} kcal ${isOver ? '• Over target' : '• On track'}`;
-          });
+          rect.addEventListener('click', showBarTooltip);
+          rect.addEventListener('touchstart', showBarTooltip, { passive: true });
 
           svg.appendChild(rect);
 
@@ -3579,11 +3583,15 @@
 
         // Calculate change since first entry
         if (logs.length >= 2) {
-          const firstWeight = Number(logs[0].weight);
-          const latestWeight = Number(logs[logs.length - 1].weight);
+          const chronological = [...logs].sort((a, b) => a.date.localeCompare(b.date));
+          const firstWeight = Number(chronological[0].weight);
+          const latestWeight = Number(chronological[chronological.length - 1].weight);
           const diff = Math.round((latestWeight - firstWeight) * 10) / 10;
           const sign = diff > 0 ? `+` : ``;
-          els.weightChangeBadge.textContent = `${sign}${diff} ${unit} since start`;
+          const isAr = state.settings.lang === 'ar';
+          els.weightChangeBadge.textContent = isAr
+            ? `${sign}${diff} ${unit} منذ البداية`
+            : `${sign}${diff} ${unit} since start`;
           els.weightChangeBadge.style.color = diff <= 0 ? 'var(--primary)' : 'var(--warning)';
         } else {
           els.weightChangeBadge.textContent = ``;
@@ -3598,12 +3606,23 @@
         svg.innerHTML = '';
 
         const logs = [...state.weightLogs].sort((a, b) => a.date.localeCompare(b.date)).slice(-30);
-        if (logs.length < 2) return;
-
         const svgW = 450;
         const svgH = 160;
         const padX = 25;
         const padY = 20;
+
+        if (logs.length < 2) {
+          const isAr = state.settings.lang === 'ar';
+          const msg = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          msg.setAttribute('x', svgW / 2);
+          msg.setAttribute('y', svgH / 2);
+          msg.setAttribute('text-anchor', 'middle');
+          msg.setAttribute('fill', 'var(--text-muted)');
+          msg.setAttribute('font-size', '12');
+          msg.textContent = isAr ? "سجل وزنة ثانية لمشاهدة خط التطور البياني" : "Log another weight entry to view trend graph";
+          svg.appendChild(msg);
+          return;
+        }
 
         const weights = logs.map(l => Number(l.weight));
         const minW = Math.min(...weights) - 1;
@@ -3639,6 +3658,7 @@
           circle.setAttribute('fill', 'var(--accent)');
           circle.setAttribute('stroke', '#ffffff');
           circle.setAttribute('stroke-width', '2');
+          circle.setAttribute('style', 'cursor: pointer;');
           svg.appendChild(circle);
         });
       }
@@ -3942,36 +3962,53 @@
          ========================================================================== */
       function setupNotifications() {
         if (!("Notification" in window)) {
-          els.notifPermStatus.textContent = "Notifications not supported in this browser.";
+          const isAr = state.settings.lang === 'ar';
+          els.notifPermStatus.textContent = isAr ? "التنبيهات غير مدعومة في هذا المتصفح." : "Notifications not supported in this browser.";
           return;
         }
 
-        if (Notification.permission === "granted") {
-          els.notifPermStatus.textContent = t('notif_granted');
-        } else if (Notification.permission === "denied") {
-          els.notifPermStatus.textContent = t('notif_denied');
+        try {
+          if (Notification.permission === "granted") {
+            els.notifPermStatus.textContent = t('notif_granted');
+          } else if (Notification.permission === "denied") {
+            els.notifPermStatus.textContent = t('notif_denied');
+          }
+        } catch (e) {
+          console.warn("Could not read Notification.permission:", e);
         }
 
-        els.btnEnableNotifs.addEventListener('click', async () => {
-          if (Notification.permission !== "granted") {
-            const perm = await Notification.requestPermission();
-            if (perm === "granted") {
-              els.notifPermStatus.textContent = t('notif_granted');
-              sendNotificationSample();
-            } else {
-              els.notifPermStatus.textContent = t('notif_denied');
+        if (!els.btnEnableNotifs._bound) {
+          els.btnEnableNotifs._bound = true;
+          els.btnEnableNotifs.addEventListener('click', async () => {
+            try {
+              if (!("Notification" in window)) return;
+              if (Notification.permission !== "granted") {
+                const perm = await Notification.requestPermission();
+                if (perm === "granted") {
+                  els.notifPermStatus.textContent = t('notif_granted');
+                  sendNotificationSample();
+                } else {
+                  els.notifPermStatus.textContent = t('notif_denied');
+                }
+              } else {
+                sendNotificationSample();
+              }
+            } catch (e) {
+              console.warn("Notification request error:", e);
             }
-          } else {
-            sendNotificationSample();
-          }
-        });
+          });
+        }
       }
 
       function sendNotificationSample() {
-        if ("Notification" in window && Notification.permission === "granted") {
-          new Notification(t('notif_sample_title'), {
-            body: t('notif_sample_body')
-          });
+        try {
+          if ("Notification" in window && Notification.permission === "granted") {
+            new Notification(t('notif_sample_title'), {
+              body: t('notif_sample_body')
+            });
+          }
+        } catch (e) {
+          console.warn("Notification constructor error (Android Chrome requires ServiceWorker):", e);
         }
       }
 
@@ -3986,20 +4023,27 @@
         backdrop.setAttribute('aria-hidden', 'false');
 
         setTimeout(() => {
-          const focusables = modalEl.querySelectorAll('button, input, select, textarea, [tabindex]:not([tabindex="-1"])');
-          if (focusables.length > 0) focusables[0].focus();
+          try {
+            const focusables = modalEl.querySelectorAll('button, input, select, textarea, [tabindex]:not([tabindex="-1"])');
+            if (focusables.length > 0 && typeof focusables[0].focus === 'function') focusables[0].focus();
+          } catch (_) {}
         }, 50);
 
-        document.body.style.overflow = 'hidden';
+        if (document.body && document.body.style) {
+          document.body.style.overflow = 'hidden';
+        }
       }
 
       function closeModal(backdrop) {
         backdrop.classList.remove('active');
         backdrop.setAttribute('aria-hidden', 'true');
-        document.body.style.overflow = '';
+
+        if (document.body && document.body.style) {
+          document.body.style.overflow = '';
+        }
 
         if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
-          previouslyFocused.focus();
+          try { previouslyFocused.focus(); } catch (_) {}
         }
       }
 
@@ -4086,6 +4130,14 @@
             els.inputHeight.value = convH;
             state.profile.height = convH;
           }
+          if (Array.isArray(state.weightLogs)) {
+            state.weightLogs.forEach(entry => {
+              if (typeof entry.weight === 'number' || !isNaN(Number(entry.weight))) {
+                entry.weight = Math.round(Number(entry.weight) * 2.20462 * 10) / 10;
+              }
+            });
+            safeStorageSet(KEYS.WEIGHTS, state.weightLogs);
+          }
         } else {
           if (!isNaN(currentWeight)) {
             const convW = Math.round((currentWeight / 2.20462) * 10) / 10;
@@ -4096,6 +4148,14 @@
             const convH = Math.round(currentHeight * 2.54 * 10) / 10;
             els.inputHeight.value = convH;
             state.profile.height = convH;
+          }
+          if (Array.isArray(state.weightLogs)) {
+            state.weightLogs.forEach(entry => {
+              if (typeof entry.weight === 'number' || !isNaN(Number(entry.weight))) {
+                entry.weight = Math.round((Number(entry.weight) / 2.20462) * 10) / 10;
+              }
+            });
+            safeStorageSet(KEYS.WEIGHTS, state.weightLogs);
           }
         }
 
@@ -4324,12 +4384,13 @@
         els.btnResetData.addEventListener('click', () => {
           showConfirmDialog(t('confirm_reset_title'), t('confirm_reset_desc'), () => {
             try {
-              if (typeof localStorage !== 'undefined') {
+              if (typeof localStorage !== 'undefined' && localStorage) {
                 localStorage.clear();
               }
             } catch (e) {
               console.warn(e);
             }
+            for (const k in inMemoryStore) delete inMemoryStore[k];
 
             state.settings = { lang: getInitialLang(), theme: getInitialTheme(), units: 'metric', ramadan: false, waterGoal: 8 };
             state.profile = { age: 25, sex: 'male', weight: 70, height: 170, activity: 1.375, goal: 'maintain' };
